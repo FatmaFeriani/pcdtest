@@ -23,6 +23,24 @@ from gemini_prompts import GeminiPromptEngine
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
+def _load_dotenv_if_present() -> None:
+    """Load simple KEY=value pairs from backend/.env without requiring python-dotenv."""
+    env_path = Path(__file__).resolve().parent / ".env"
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv_if_present()
+
 MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "sse").strip().lower()
 MCP_URL = os.getenv("MCP_URL", "http://localhost:8001").strip()
 _GEMINI_ENGINE: GeminiPromptEngine | None = None
@@ -96,9 +114,9 @@ def _get_mcp():
 def _get_gemini():
     global _GEMINI_ENGINE
     if _GEMINI_ENGINE is None:
-        api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv("GROQ_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or os.getenv("GEMINI_API_KEY")
         if not api_key:
-            raise RuntimeError("DEEPSEEK_API_KEY is required for AI-powered outputs")
+            raise RuntimeError("GROQ_API_KEY is required for AI-powered outputs")
         _GEMINI_ENGINE = GeminiPromptEngine(api_key)
     return _GEMINI_ENGINE
 
@@ -147,12 +165,12 @@ def _runtime_guidance(error_text: str, *, feature: str) -> str:
     message = (error_text or "").strip()
     lower = message.lower()
 
-    if "gemini_api_key is required" in lower or "google_api_key" in lower:
+    if "groq_api_key is required" in lower or "deepseek_api_key is required" in lower or "gemini_api_key is required" in lower or "google_api_key" in lower:
         return (
-            f"{feature} is temporarily unavailable because Gemini API credentials are missing.\n\n"
+            f"{feature} is temporarily unavailable because AI API credentials are missing.\n\n"
             "Set the key and restart the backend:\n"
-            "1) `$env:GEMINI_API_KEY=\"<your-key>\"`\n"
-            "2) `python api_server.py`\n\n"
+            "1) `$env:GROQ_API_KEY=\"<your-key>\"`\n"
+            "2) `python api_server.py --port 18000`\n\n"
             f"Technical details: {message}"
         )
 
@@ -611,7 +629,7 @@ def health():
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port",    type=int, default=8000)
+    parser.add_argument("--port", type=int, default=int(os.getenv("PORT", "18000")))
     args = parser.parse_args()
 
     # Try to initialize MCP transport, but don't block API boot.

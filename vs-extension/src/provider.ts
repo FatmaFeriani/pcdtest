@@ -19,6 +19,7 @@ export class AiDevAssistantProvider implements vscode.WebviewViewProvider {
     _token: vscode.CancellationToken
   ) {
     this._view = webviewView;
+    this._log.appendLine('[webview] resolving AI Dev Assistant panel');
 
     webviewView.webview.options = {
       enableScripts: true,
@@ -30,6 +31,7 @@ export class AiDevAssistantProvider implements vscode.WebviewViewProvider {
 
     
     webviewView.webview.onDidReceiveMessage(async (message) => {
+      this._log.appendLine(`[webview] message: ${message.command || 'unknown'}`);
       switch (message.command) {
         case 'getWorkspaceFiles':
           await this._sendWorkspaceFiles();
@@ -248,40 +250,12 @@ export class AiDevAssistantProvider implements vscode.WebviewViewProvider {
   private async _callBackend(endpoint: string, payload: unknown, requestId: string) {
     if (!this._view) { this._log.appendLine(`[callBackend] no view, skipping ${endpoint}`); return; }
     const config = vscode.workspace.getConfiguration('aiDevAssistant');
-    const backendUrl = config.get<string>('backendUrl') || 'http://localhost:18000';
+    const backendUrl = config.get<string>('backendUrl') || 'http://127.0.0.1:18000';
+    const timeoutMs = Math.max(1000, config.get<number>('requestTimeoutMs') || 180000);
     this._log.appendLine(`[callBackend] ${endpoint} → ${backendUrl}`);
 
     try {
-      const http = await import('node:http');
-      const https = await import('node:https');
-      const url = new URL(endpoint, backendUrl);
-      const body = JSON.stringify(payload);
-
-      const method = endpoint === '/health' ? 'GET' : 'POST';
-      const options = {
-        method,
-        headers: { 'Content-Type': 'application/json' } as Record<string, string | number>
-      };
-      if (method === 'POST') {
-        options.headers['Content-Length'] = Buffer.byteLength(body);
-      }
-
-      const lib = url.protocol === 'https:' ? https : http;
-
-      const result = await new Promise<string>((resolve, reject) => {
-        const req = (lib as typeof http).request(url, options, (res) => {
-          let data = '';
-          res.on('data', chunk => data += chunk);
-          res.on('end', () => resolve(data));
-        });
-        req.setTimeout(10000, () => { req.destroy(new Error('Request timeout')); });
-        req.on('error', reject);
-        if (method === 'POST') req.write(body);
-        req.end();
-      });
-
-      this._log.appendLine(`[callBackend] response: ${result.slice(0, 200)}`);
-      const parsed = JSON.parse(result);
+      const parsed = await this._requestBackendWithLocalhostFallback(backendUrl, endpoint, payload, timeoutMs);
       if (this._view) {
         this._view.webview.postMessage({ command: 'backendResponse', requestId, data: parsed, error: null });
         this._log.appendLine(`[callBackend] postMessage sent for ${requestId}`);
@@ -295,5 +269,81 @@ export class AiDevAssistantProvider implements vscode.WebviewViewProvider {
         this._view.webview.postMessage({ command: 'backendResponse', requestId, data: null, error: msg });
       }
     }
+  }
+
+  private async _requestBackendWithLocalhostFallback(backendUrl: string, endpoint: string, payload: unknown, timeoutMs: number) {
+    try {
+      return await this._requestBackend(backendUrl, endpoint, payload, timeoutMs);
+    } catch (error) {
+      const fallbackUrl = this._localhostFallbackUrl(backendUrl);
+      if (!fallbackUrl) {
+        throw error;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      this._log.appendLine(`[callBackend] ${backendUrl} failed (${message}); retrying ${fallbackUrl}`);
+      return await this._requestBackend(fallbackUrl, endpoint, payload, timeoutMs);
+    }
+  }
+
+  private _localhostFallbackUrl(backendUrl: string): string | null {
+    try {
+      const url = new URL(backendUrl);
+      if (url.hostname !== 'localhost') {
+        return null;
+      }
+
+      url.hostname = '127.0.0.1';
+      return url.toString().replace(/\/$/, '');
+    } catch {
+      return null;
+    }
+  }
+
+  private async _requestBackend(backendUrl: string, endpoint: string, payload: unknown, timeoutMs: number) {
+    const http = await import('node:http');
+    const https = await import('node:https');
+    const url = new URL(endpoint, backendUrl.endsWith('/') ? backendUrl : `${backendUrl}/`);
+    const body = JSON.stringify(payload ?? {});
+
+    const method = endpoint.endsWith('/health') || endpoint === '/health' ? 'GET' : 'POST';
+    const options = {
+      method,
+      headers: { 'Content-Type': 'application/json' } as Record<string, string | number>
+    };
+    if (method === 'POST') {
+      options.headers['Content-Length'] = Buffer.byteLength(body);
+    }
+
+    const lib = url.protocol === 'https:' ? https : http;
+    const result = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+      const req = (lib as typeof http).request(url, options, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => resolve({ statusCode: res.statusCode ?? 0, body: data }));
+      });
+      req.setTimeout(timeoutMs, () => { req.destroy(new Error(`Request timeout after ${timeoutMs}ms`)); });
+      req.on('error', reject);
+      if (method === 'POST') req.write(body);
+      req.end();
+    });
+
+    this._log.appendLine(`[callBackend] status=${result.statusCode} response: ${result.body.slice(0, 200)}`);
+
+    let parsed: unknown;
+    try {
+      parsed = result.body ? JSON.parse(result.body) : {};
+    } catch {
+      throw new Error(`Backend returned non-JSON response (${result.statusCode}) from ${url.toString()}`);
+    }
+
+    if (result.statusCode < 200 || result.statusCode >= 300) {
+      const message = parsed && typeof parsed === 'object' && 'error' in parsed
+        ? String((parsed as { error?: unknown }).error)
+        : `Backend returned HTTP ${result.statusCode}`;
+      throw new Error(message);
+    }
+
+    return parsed;
   }
 }

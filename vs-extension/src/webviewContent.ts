@@ -3,12 +3,12 @@ import * as vscode from 'vscode';
 export function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const nonce = getNonce();
 
-  return /* html */`<!DOCTYPE html>
+  return /* html */String.raw`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src https: http: data:;"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src https: http: data: ${webview.cspSource};"/>
 <title>AI Dev Assistant</title>
 <style>
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -113,19 +113,19 @@ export function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.
   <!-- Service selection view -->
   <div class="service-view" id="viewService">
     <div class="section-label">Select a service</div>
-    <button class="service-item" onclick="selectService('explain')">
+    <button class="service-item" data-service="explain">
       <span class="service-name">Explain Code</span>
       <span class="service-hint">Get a clear explanation of selected or pasted code.</span>
     </button>
-    <button class="service-item" onclick="selectService('readme')">
+    <button class="service-item" data-service="readme">
       <span class="service-name">Generate README</span>
       <span class="service-hint">Scan workspace files and generate a project README.</span>
     </button>
-    <button class="service-item" onclick="selectService('tests')">
+    <button class="service-item" data-service="tests">
       <span class="service-name">Generate Unit Tests</span>
       <span class="service-hint">Create unit tests for selected or pasted code.</span>
     </button>
-    <button class="service-item" onclick="selectService('recommendation')">
+    <button class="service-item" data-service="recommendation">
       <span class="service-name">General Recommendation</span>
       <span class="service-hint">Describe a problem or decision and get an AI recommendation.</span>
     </button>
@@ -134,7 +134,7 @@ export function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.
   <!-- Per-service conversation view (hidden initially) -->
   <div class="conv-view" id="viewConversation" style="display:none">
     <div class="conv-head">
-      <button class="back-btn" onclick="goBack()">&#8592; Back</button>
+      <button class="back-btn" data-action="back">&#8592; Back</button>
       <span class="conv-title" id="convTitle"></span>
     </div>
     <div class="conv-messages" id="convMessages"></div>
@@ -189,35 +189,35 @@ export function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.
       const hasSel = selectedCode.length > 0;
       el.innerHTML =
         (hasSel ? '<div class="ctx-pill"><strong>' + esc(selectedLines) + ' lines selected</strong> from ' + esc(currentFile.name || 'file') +
-          '<button class="ctx-clear" onclick="clearSelection()" title="Clear">&#x2715;</button></div>' : '') +
+          '<button class="ctx-clear" data-action="clear-selection" title="Clear">&#x2715;</button></div>' : '') +
         '<textarea id="codeInputEl" class="code-input" placeholder="Paste code to explain...">' +
         (hasSel ? esc(selectedCode) : '') + '</textarea>' +
         '<div class="input-label">Detail level</div>' +
         '<div class="pill-row">' +
         ['brief','standard','detailed'].map(l =>
           '<button class="pill-btn' + (explainDetailLevel === l ? ' active' : '') +
-          '" onclick="setDetailLevel(\'' + l + '\')">' + cap(l) + '</button>'
+          '" data-detail-level="' + l + '">' + cap(l) + '</button>'
         ).join('') + '</div>' +
-        '<div class="action-row"><button class="primary-btn" id="runBtn" onclick="runExplain()">Explain</button></div>';
+        '<div class="action-row"><button class="primary-btn" id="runBtn" data-action="run-explain">Explain</button></div>';
     }
 
     else if (service === 'readme') {
-      const proj = currentFile.path ? currentFile.path.replace(/\\/g,'/').split('/').slice(-3,-1).join('/') : 'workspace';
+      const proj = currentFile.path ? currentFile.path.replaceAll(String.fromCharCode(92), '/').split('/').slice(-3,-1).join('/') : 'workspace';
       el.innerHTML =
         '<div class="ctx-pill">Project: <strong>' + esc(proj) + '</strong></div>' +
         '<div class="input-label">Scans all workspace source files and generates a README with AI.</div>' +
-        '<div class="action-row"><button class="primary-btn" id="runBtn" onclick="runReadme()">Scan &amp; Generate</button></div>';
+        '<div class="action-row"><button class="primary-btn" id="runBtn" data-action="run-readme">Scan &amp; Generate</button></div>';
     }
 
     else if (service === 'tests') {
       const hasSel = selectedCode.length > 0;
       el.innerHTML =
         (hasSel ? '<div class="ctx-pill"><strong>' + esc(selectedLines) + ' lines selected</strong> from ' + esc(currentFile.name || 'file') +
-          '<button class="ctx-clear" onclick="clearSelection()" title="Clear">&#x2715;</button></div>' : '') +
+          '<button class="ctx-clear" data-action="clear-selection" title="Clear">&#x2715;</button></div>' : '') +
         '<textarea id="codeInputEl" class="code-input" placeholder="Paste code to generate tests for...">' +
         (hasSel ? esc(selectedCode) : '') + '</textarea>' +
         '<input id="langInputEl" type="text" class="text-input" placeholder="Language (optional — auto-detected)" />' +
-        '<div class="action-row"><button class="primary-btn" id="runBtn" onclick="runTests()">Generate Tests</button></div>';
+        '<div class="action-row"><button class="primary-btn" id="runBtn" data-action="run-tests">Generate Tests</button></div>';
     }
 
     else if (service === 'recommendation') {
@@ -228,7 +228,7 @@ export function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.
         '<textarea id="contextInputEl" class="code-input" placeholder="Project details, current stack, scale requirements..." style="min-height:56px"></textarea>' +
         '<div class="input-label">Constraints (optional)</div>' +
         '<textarea id="constraintsInputEl" class="code-input" placeholder="Budget, team size, deadlines, existing infrastructure..." style="min-height:40px"></textarea>' +
-        '<div class="action-row"><button class="primary-btn" id="runBtn" onclick="runRecommendation()">Get Recommendation</button></div>';
+        '<div class="action-row"><button class="primary-btn" id="runBtn" data-action="run-recommendation">Get Recommendation</button></div>';
     }
   }
 
@@ -343,8 +343,8 @@ export function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.
 
     const actions = document.createElement('div');
     actions.style.cssText = 'display:flex;gap:8px;padding:0 0 4px';
-    actions.innerHTML = '<button class="mini-btn" onclick="copyResult()">Copy</button>' +
-      (showSave ? '<button class="mini-btn" onclick="saveReadme()">Save README.md</button>' : '');
+    actions.innerHTML = '<button class="mini-btn" data-action="copy-result">Copy</button>' +
+      (showSave ? '<button class="mini-btn" data-action="save-readme">Save README.md</button>' : '');
     container.appendChild(actions);
 
     container.scrollTop = container.scrollHeight;
@@ -374,9 +374,12 @@ export function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.
       const badge = document.getElementById('statusBadge');
       badge.textContent = ok ? 'Connected' : 'Offline';
       badge.classList.toggle('on', !!ok);
+      const hint = error && String(error).includes('ECONNREFUSED')
+        ? 'Backend offline: run backend/api_server.py on port 18000 or start Docker.'
+        : ('Backend offline' + (error ? ': ' + error : '') + ' — ensure the API is running on port 18000');
       document.getElementById('statusBar').textContent = ok
         ? 'Backend connected — ready'
-        : ('Backend offline' + (error ? ': ' + error : '') + ' — ensure the API is running on port 18000');
+        : hint;
       return;
     }
 
@@ -415,7 +418,7 @@ export function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.
     container.appendChild(div);
     const actions = document.createElement('div');
     actions.style.cssText = 'display:flex;gap:8px;padding:0 0 4px';
-    actions.innerHTML = '<button class="mini-btn" onclick="copyResult()">Copy PlantUML</button>';
+    actions.innerHTML = '<button class="mini-btn" data-action="copy-result">Copy PlantUML</button>';
     container.appendChild(actions);
     container.scrollTop = container.scrollHeight;
     setRunning(false);
@@ -458,6 +461,28 @@ export function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.
   function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
   // ── VS Code message handler ────────────────────────────────────────────────
+  document.addEventListener('click', function(event) {
+    const button = event.target && event.target.closest ? event.target.closest('button') : null;
+    if (!button) return;
+
+    const service = button.getAttribute('data-service');
+    if (service) { selectService(service); return; }
+
+    const detailLevel = button.getAttribute('data-detail-level');
+    if (detailLevel) { setDetailLevel(detailLevel); return; }
+
+    switch (button.getAttribute('data-action')) {
+      case 'back': goBack(); break;
+      case 'clear-selection': clearSelection(); break;
+      case 'run-explain': runExplain(); break;
+      case 'run-readme': runReadme(); break;
+      case 'run-tests': runTests(); break;
+      case 'run-recommendation': runRecommendation(); break;
+      case 'copy-result': copyResult(); break;
+      case 'save-readme': saveReadme(); break;
+    }
+  });
+
   window.addEventListener('message', function(event) {
     const msg = event.data;
     switch (msg.command) {
@@ -478,7 +503,7 @@ export function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.
           const files = msg.files || [];
           const folderContent = files.map(function(f){ return '// FILE: ' + (f.relativePath||f.name||'') + '\n' + (f.content||''); }).join('\n\n');
           const projectName = currentFile.path
-            ? currentFile.path.replace(/\\\\/g,'/').split('/').slice(-3,-1).join('/')
+            ? currentFile.path.replaceAll(String.fromCharCode(92), '/').split('/').slice(-3,-1).join('/')
             : 'project';
           callBackend('/api/analyze', {
             type: 'readme',

@@ -1,38 +1,62 @@
 # Running the Python Backend
 
-Yes — for this project, you create a virtual environment, install dependencies, then run `app.py`.
-
 ## Steps (Windows / PowerShell)
 
-1. Open a terminal at the project root:
+1. Open a terminal in the backend folder:
+
    ```powershell
-   cd C:\Users\oussa\AI-Dev-Assistant\backend
+   cd C:\Users\fatma\AI-Dev-Assistant\AI-Dev-Assistant\backend
    ```
 
-2. Create a virtual environment:
+2. Copy the env template once and add your API key:
+
    ```powershell
-   python -m venv .venv
+   Copy-Item .env.example .env
+   notepad .env
    ```
 
-3. Activate it:
+   Set `GROQ_API_KEY=...`.
+
+3. Start the backend used by the VS Code extension:
+
    ```powershell
-   .\.venv\Scripts\Activate.ps1
+   .\start_backend.ps1
    ```
 
-4. Install dependencies:
-   ```powershell
-   python -m pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
+   This installs the lightweight extension dependencies from `requirements-extension.txt`.
+   Install `requirements.txt` only if you also need the heavier RAG/embedding tooling.
 
-5. Run the app:
-   ```powershell 1
-   python -m mcp_tools.server --mode http --port 8001   
-   ```
-   ```powershell 2
-   python app.py
-   ```
+The extension expects the API at:
 
-## Important note
+```text
+http://localhost:18000
+```
 
-This backend calls Ollama at `http://localhost:11434/api/generate` by default, so make sure Ollama is installed and running before using the assistant features.
+Health check:
+
+```powershell
+Invoke-RestMethod http://localhost:18000/health
+```
+
+## Manual Startup
+
+Terminal 1:
+
+```powershell
+cd C:\Users\fatma\AI-Dev-Assistant\AI-Dev-Assistant\backend
+.\.venv\Scripts\Activate.ps1
+python -m mcp_tools.server --mode http --port 8001
+```
+
+Terminal 2:
+
+```powershell
+cd C:\Users\fatma\AI-Dev-Assistant\AI-Dev-Assistant\backend
+.\.venv\Scripts\Activate.ps1
+python api_server.py --port 18000
+```
+
+## Important Note
+
+README, test, explanation, and recommendation features use the Groq-compatible API key through `GROQ_API_KEY`.
+MCP/UML features may still use Ollama, so keep Ollama running if you use those routes.

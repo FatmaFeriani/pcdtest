@@ -8,7 +8,11 @@
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onView:aiDevAssistant.panel",
+    "onCommand:aiDevAssistant.openPanel",
+    "onCommand:aiDevAssistant.explainSelection"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
@@ -38,8 +42,14 @@
       "properties": {
         "aiDevAssistant.backendUrl": {
           "type": "string",
-          "default": "http://localhost:18000",
+          "default": "http://127.0.0.1:18000",
           "description": "Base URL for the backend API used by the extension."
+        },
+        "aiDevAssistant.requestTimeoutMs": {
+          "type": "number",
+          "default": 180000,
+          "minimum": 1000,
+          "description": "Timeout in milliseconds for backend API requests."
         }
       }
     },
